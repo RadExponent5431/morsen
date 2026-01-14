@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Live Morse Lamps</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body {
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  background: linear-gradient(160deg,#0a0a0a,#1c1c1c);
+  color: #eee;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  padding: 0px;
+}
+
+h1 {
+  margin-top: 10px;
+  font-size: 2.4rem;
+}
+
+p {
+  font-size: 1rem;
+  color: #ccc;
+  margin-bottom: 20px;
+}
+
+#lamps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 90%;
+  gap: 20px;
+  margin-bottom: 25px;
+}
+
+.lamp {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: #222;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 10px #000 inset;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.lamp span {
+  position: absolute;
+  bottom: -22px;
+  font-size: 0.75rem;
+  color: #aaa;
+  text-align: center;
+  width: 100%;
+}
+
+#log {
+  max-width: 90%;
+  min-height: 100px;
+  background: rgba(0,0,0,0.4);
+  padding: 15px;
+  border-radius: 12px;
+  font-family: monospace;
+  font-size: 1.3rem;
+  color: #00ff88;
+  overflow-x: auto;
+  box-shadow: 0 0 20px rgba(0,255,136,0.2);
+  transition: background 0.3s;
+}
+
+@media (max-width: 700px) {
+  .lamp {
+    width: 70px;
+    height: 70px;
+  }
+
+  h1 {
+    margin-top: 50px;
+  }
+}
+</style>
+</head>
+<body>
+<h1>Live Morse Lamps</h1>
+<p>Press and hold your key / spacebar to send Morse code</p>
+
+<!-- Füge direkt nach <body> die Statusanzeige ein -->
+<div id="status" style="
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: #444;
+    color: #eee;
+    font-family: sans-serif;
+    font-size: 0.9rem;
+    box-shadow: 0 0 8px #000;
+">Connecting...</div>
+
+<div id="lamps"></div>
+
+<script>
+let socket = new WebSocket("wss://morsen.railway.internal");
+
+let sessionId = null;
+let pressStart = null;
+let audioCtx = null;
+const oscillators = {}; // sessionId -> OscillatorNode
+
+const lampsDiv = document.getElementById("lamps");
+const log = document.getElementById("log");
+let lamps = {}; // sessionId -> lamp div
+
+/* --- Generate a color from a string (session ID) --- */
+function stringToColor(str) {
+  if (!str) return "#888"; // fallback Farbe
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  const h = hash % 360;
+  return `hsl(${h}, 70%, 50%)`;
+}
+
+function stringToFreq(str) {
+  if (!str) return 700; // fallback Frequenz
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return 600 + (Math.abs(hash) % 400); // 600-1000 Hz
+}
+
+
+/* --- Sound function --- */
+function tone(id, on) {
+  if (!audioCtx) audioCtx = new AudioContext();
+  if (on) {
+    if (oscillators[id]) return; // schon aktiv
+    const osc = audioCtx.createOscillator();
+    osc.frequency.value = stringToFreq(id);
+    osc.connect(audioCtx.destination);
+    osc.start();
+    oscillators[id] = osc;
+  } else {
+    if (oscillators[id]) {
+      oscillators[id].stop();
+      oscillators[id].disconnect?.();
+      delete oscillators[id];
+    }
+  }
+}
+
+function updateLamp(id, active){
+  if (!id) return; // ID fehlt → nicht weiter machen
+
+  if(!lamps[id]){
+    const lamp = document.createElement("div");
+    lamp.classList.add("lamp");
+    lamp.style.background = stringToColor(id);
+    const label = document.createElement("span");
+    label.textContent = id.slice(0,4);
+    lamp.appendChild(label);
+    lampsDiv.appendChild(lamp);
+    lamps[id] = lamp;
+  }
+
+  lamps[id].style.boxShadow = active
+    ? `0 0 25px ${stringToColor(id)}, 0 0 60px ${stringToColor(id)} inset`
+    : `0 0 10px #000 inset`;
+
+  tone(id, active);
+}
+
+
+/* --- Input handlers für eigenen User --- */
+function down(){
+  if(pressStart!==null) return;
+  pressStart = Date.now();
+  updateLamp(sessionId,true);
+  socket.send(JSON.stringify({ type:"down", sessionId }));
+}
+
+function up(){
+  if(pressStart===null) return;
+  const duration = Date.now()-pressStart;
+  pressStart = null;
+  updateLamp(sessionId,false);
+  socket.send(JSON.stringify({ type:"up", duration, sessionId }));
+}
+
+/* --- Mouse / touch / keyboard --- */
+document.body.onmousedown = down;
+document.body.onmouseup = up;
+document.body.ontouchstart = e=>{ e.preventDefault(); down(); };
+document.body.ontouchend = e=>{ e.preventDefault(); up(); };
+document.body.onkeydown = e=>{ if(e.code==="Space") down(); };
+document.body.onkeyup = e=>{ if(e.code==="Space") up(); };
+
+
+const WS_URL = "wss://morsen-production.up.railway.app";
+const RECONNECT_INTERVAL = 5000; // 5 Sekunden
+
+const statusDiv = document.getElementById("status");
+
+function setStatus(text, color) {
+  statusDiv.textContent = text;
+  statusDiv.style.background = color;
+}
+
+// Funktion, um WebSocket zu (re)connecten
+function connectSocket() {
+    if (socket.readyState === 1) return;
+
+  socket = new WebSocket(WS_URL);
+
+  setStatus("Connecting...", "#444");
+
+  socket.onopen = () => setStatus("Connected", "#0f0");
+  socket.onclose = () => {
+    setStatus("Disconnected", "#f00");
+    // Versuche nach 5 Sekunden erneut zu verbinden
+    setTimeout(connectSocket, RECONNECT_INTERVAL);
+  };
+  socket.onerror = () => setStatus("Error", "#f90");
+
+  socket.onmessage = e => {
+    const data = JSON.parse(e.data);
+
+    if(data.type === "session") {
+      sessionId = data.id;
+      updateLamp(sessionId,false);
+      return;
+    }
+
+    if(!data.sessionId) return;
+
+    if(data.type === "remove") {
+      if(lamps[data.sessionId]) {
+        updateLamp(data.sessionId,false);
+        lamps[data.sessionId].remove();
+        delete lamps[data.sessionId];
+      }
+      return;
+    }
+
+    if(data.type === "down") updateLamp(data.sessionId,true);
+    if(data.type === "up") updateLamp(data.sessionId,false);
+
+    if(data.type === "up") {
+      const symbol = data.duration < 250 ? "." : "-";
+      log.textContent += `${symbol} `;
+      log.scrollLeft = log.scrollWidth;
+    }
+  };
+}
+
+// Initialer Verbindungsaufbau
+connectSocket();
+
+/* --- WebSocket events --- */
+socket.onmessage = e => {
+  const data = JSON.parse(e.data);
+
+  if(data.type === "session") {
+    sessionId = data.id;
+    updateLamp(sessionId,false);
+    return;
+  }
+
+  if(!data.sessionId) return;
+
+  if(data.type === "remove") {
+    if(lamps[data.sessionId]) {
+      updateLamp(data.sessionId,false);
+      lamps[data.sessionId].remove();
+      delete lamps[data.sessionId];
+    }
+    return;
+  }
+
+  if(data.type === "down") updateLamp(data.sessionId,true);
+  if(data.type === "up") updateLamp(data.sessionId,false);
+
+  if(data.type === "up") {
+    const symbol = data.duration < 250 ? "." : "-";
+    log.textContent += `${symbol} `;
+    log.scrollLeft = log.scrollWidth;
+  }
+};
+</script>
+</body>
+</html>
