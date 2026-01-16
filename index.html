@@ -73,6 +73,20 @@ p {
   transition: background 0.3s;
 }
 
+* {
+  user-select: none;
+}
+
+.lamp .translation {
+  position: absolute;
+  bottom: -42px;
+  font-size: 0.7rem;
+  color: #6f6;
+  text-align: center;
+  width: 100%;
+  font-family: monospace;
+}
+
 @media (max-width: 700px) {
   .lamp {
     width: 70px;
@@ -106,6 +120,25 @@ p {
 <div id="lamps"></div>
 
 <script>
+const MORSE_TABLE = {
+  ".-":"A","-...":"B","-.-.":"C","-..":"D",".":"E",
+  "..-.":"F","--.":"G","....":"H","..":"I",".---":"J",
+  "-.-":"K",".-..":"L","--":"M","-.":"N","---":"O",
+  ".--.":"P","--.-":"Q",".-.":"R","...":"S","-":"T",
+  "..-":"U","...-":"V",".--":"W","-..-":"X","-.--":"Y","--..":"Z",
+  "-----":"0",".----":"1","..---":"2","...--":"3","....-":"4",
+  ".....":"5","-....":"6","--...":"7","---..":"8","----.":"9"
+};
+
+function decodeMorse(seq) {
+  return MORSE_TABLE[seq] || "?";
+}
+
+let morseBuffer = {};        // sessionId -> ".-.-"
+let lastUpTime = {};        // sessionId -> timestamp
+let practiceMode = false;
+
+  
 let socket = new WebSocket("wss://morsen.railway.internal");
 
 let sessionId = null;
@@ -154,17 +187,25 @@ function tone(id, on) {
 }
 
 function updateLamp(id, active){
-  if (!id) return; // ID fehlt → nicht weiter machen
+  if (!id) return;
 
   if(!lamps[id]){
     const lamp = document.createElement("div");
-    lamp.classList.add("lamp");
+    lamp.className = "lamp";
     lamp.style.background = stringToColor(id);
+
     const label = document.createElement("span");
     label.textContent = id.slice(0,4);
-    lamp.appendChild(label);
+
+    const translation = document.createElement("div");
+    translation.className = "translation";
+    translation.textContent = "";
+
+    lamp.append(label, translation);
     lampsDiv.appendChild(lamp);
+
     lamps[id] = lamp;
+    morseBuffer[id] = "";
   }
 
   lamps[id].style.boxShadow = active
@@ -173,7 +214,6 @@ function updateLamp(id, active){
 
   tone(id, active);
 }
-
 
 /* --- Input handlers für eigenen User --- */
 function down(){
@@ -260,6 +300,31 @@ function connectSocket() {
 // Initialer Verbindungsaufbau
 connectSocket();
 
+function handleSymbol(id, symbol) {
+  morseBuffer[id] += symbol;
+
+  const t = Date.now();
+  lastUpTime[id] = t;
+
+  setTimeout(() => {
+    if (Date.now() - lastUpTime[id] > 600 && morseBuffer[id]) {
+      const letter = decodeMorse(morseBuffer[id]);
+      lamps[id].querySelector(".translation").textContent += letter;
+      morseBuffer[id] = "";
+    }
+  }, 650);
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "p") {
+    practiceMode = !practiceMode;
+    log.textContent = "";
+    Object.values(lamps).forEach(l =>
+      l.querySelector(".translation").textContent = ""
+    );
+  }
+});
+  
 /* --- WebSocket events --- */
 socket.onmessage = e => {
   const data = JSON.parse(e.data);
@@ -285,10 +350,13 @@ socket.onmessage = e => {
   if(data.type === "up") updateLamp(data.sessionId,false);
 
   if(data.type === "up") {
-    const symbol = data.duration < 250 ? "." : "-";
-    log.textContent += `${symbol} `;
-    log.scrollLeft = log.scrollWidth;
+  const symbol = data.duration < 250 ? "." : "-";
+
+  if (!practiceMode || data.sessionId === sessionId) {
+    log.textContent += symbol;
+    handleSymbol(data.sessionId, symbol);
   }
+}
 };
 </script>
 </body>
