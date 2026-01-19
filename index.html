@@ -137,7 +137,6 @@ function decodeMorse(seq) {
 let morseBuffer = {};        // sessionId -> ".-.-"
 let lastUpTime = {};        // sessionId -> timestamp
 let practiceMode = false;
-
   
 let socket = new WebSocket("wss://morsen.railway.internal");
 
@@ -296,7 +295,6 @@ function connectSocket() {
     }
   };
 }
-
 // Initialer Verbindungsaufbau
 connectSocket();
 
@@ -334,7 +332,6 @@ socket.onmessage = e => {
     updateLamp(sessionId,false);
     return;
   }
-
   if(!data.sessionId) return;
 
   if(data.type === "remove") {
@@ -345,7 +342,6 @@ socket.onmessage = e => {
     }
     return;
   }
-
   if(data.type === "down") updateLamp(data.sessionId,true);
   if(data.type === "up") updateLamp(data.sessionId,false);
 
