@@ -33,11 +33,12 @@ Each connected user gets their own virtual “lamp” and can send Morse code li
 
 ## Repository Structure
 
+```
 .
 ├─ server.js        # Node.js WebSocket server
 ├─ package.json     # Node dependencies and start script
 └─ index.html       # Frontend (can also be hosted separately)
-
+```
 ---
 
 ## WebSocket Protocol
